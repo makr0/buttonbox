@@ -1,78 +1,88 @@
-/* @file HelloKeypad.pde
-|| @version 1.0
-|| @author Alexander Brevig
-|| @contact alexanderbrevig@gmail.com
-||
-|| @description
-|| | Demonstrates the simplest use of the matrix Keypad library.
-|| #
-*/
-#include <Keypad.h>
+#include "FS.h"
+#include <AceButton.h>
+using ace_button::AceButton;
+using ace_button::ButtonConfig;
+using ace_button::LadderButtonConfig;
 #include <WS2812FX.h>
-#define TFT_SCLK 22
-#define TFT_MISO 21  // Automatically assigned with ESP8266 if not defined
-//#define TFT_MOSI 21  // Automatically assigned with ESP8266 if not defined
-#include <TFT_eSPI.h> // Hardware-specific library
 #include <SPI.h>
+#include <TFT_eSPI.h> // Hardware-specific library
+#include <TFT_eWidget.h>  // Widget library
 
 const byte ROWS = 5;
 const byte COLS = 3;
 
 #define LED_COUNT 8
-#define LED_PIN 17
-#define M_SIZE 0.667
+#define LED_PIN 26
+#define SWITCH1_PIN 36
+#define SWITCH2_PIN 37
+#define DREHSWITCH_PIN 39
+#define MULTISWITCH_PIN 38
+#define CALIBRATION_FILE "/calibrationData"
+#define GRAPH_POS_X 0
+#define GRAPH_POS_Y 120
+#define GRAPH_W 320
+#define GRAPH_H 110
 
-
-
-char boxKeys[ROWS][COLS] = {
-  {'1','2','3'},
-  {'4','5','6'},
-  {'7','8','9'},
-  {'A','B','C'},
-  {'D','E','F'}
+static const uint8_t DREHSWITCH_POSITIONS = 5;
+static AceButton d0(nullptr, 0);
+static AceButton d1(nullptr, 1);
+static AceButton d2(nullptr, 2);
+static AceButton d3(nullptr, 3);
+static AceButton d4(nullptr, 4);
+static AceButton m0(nullptr, 0);
+static AceButton m1(nullptr, 1);
+static AceButton m2(nullptr, 2);
+static AceButton m3(nullptr, 3);
+static AceButton m4(nullptr, 4);
+static AceButton* const DREHBUTTONS[DREHSWITCH_POSITIONS] = {
+    &d0, &d1, &d2, &d3, &d4
 };
+static const uint8_t MULTISWITCH_POSITIONS = 5;
+static AceButton* const MULTIBUTTONS[MULTISWITCH_POSITIONS] = {
+    &m0, &m1, &m2, &m3, &m4
+};
+// Define the ADC voltage levels for each button
+static const uint8_t NUM_LEVELS = DREHSWITCH_POSITIONS + 1;
+static const uint16_t LEVELS[NUM_LEVELS] = {
+  0,
+  500,
+  900,
+  1400,
+  2000,
+  3000
+};
+// The LadderButtonConfig constructor binds the AceButton objects in the BUTTONS
+// array to the LadderButtonConfig.
+static LadderButtonConfig drehswitchButtonConfig(
+  DREHSWITCH_PIN, NUM_LEVELS, LEVELS, DREHSWITCH_POSITIONS, DREHBUTTONS
+);
+static LadderButtonConfig frontplateButtonConfig(
+  MULTISWITCH_PIN, NUM_LEVELS, LEVELS, DREHSWITCH_POSITIONS, MULTIBUTTONS
+);
 
-byte rowPins[ROWS] = {12,13,15,27,33}; 
-byte colPins[COLS] = {32,25,26};
-
-Keypad frontPlate = Keypad( makeKeymap(boxKeys), rowPins, colPins, ROWS, COLS); 
 WS2812FX ledbar = WS2812FX(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 TFT_eSPI tft = TFT_eSPI();       // Invoke tft library
+MeterWidget   amps  = MeterWidget(&tft);
+//MeterWidget   volts = MeterWidget(&tft);
+GraphWidget graph = GraphWidget(&tft);    // Graph widget gr instance with pointer to tft
+TraceWidget trace = TraceWidget(&graph);     // Graph trace tr with pointer to gr
 
-unsigned long loopCount;
-unsigned long startTime;
-String msg;
+#define DISPLAY_LOOP_PERIOD 20 // Display update rate 50Hz
+#define BUTTON_READ_PERIOD 30 // Read Buttons every 30ms
 
 void ledtask (void* pvParameters);
 void displaytask (void* pvParameters);
-void analogMeter();
-void plotNeedle(int value, byte ms_delay);
+void buttontask (void* pvParameters);
+float mapValue(float ip, float ipmin, float ipmax, float tomin, float tomax);
+void drehswitchEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState);
+void frontplateEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState);
 
-
-#define TFT_GREY 0x5AEB
-#define TFT_ORANGE      0xFD20      /* 255, 165,   0 */
-
-float ltx = 0;    // Saved x coord of bottom of needle
-uint16_t osx = M_SIZE*120, osy = M_SIZE*120; // Saved x & y coords
-uint32_t updateTime = 0;       // time for next update
-
-int old_analog =  -999; // Value last displayed
-
-int value[6] = {0, 0, 0, 0, 0, 0};
-int old_value[6] = { -1, -1, -1, -1, -1, -1};
-int d = 0;
-
-
-void setup(){
-    Serial.begin(115200);
-    loopCount = 0;
-    startTime = millis();
-    msg = "";
+void setupLeds() {
     ledbar.init();
-    ledbar.setBrightness(40);
+    ledbar.setBrightness(30);
     ledbar.start();
-    ledbar.setMode(FX_MODE_POPCORN);
-    ledbar.setSpeed(500);
+    ledbar.setMode(FX_MODE_RAINBOW_CYCLE);
+    ledbar.setSpeed(5000);
     xTaskCreatePinnedToCore (
       ledtask,     // Function to implement the task
       "led",   // Name of the task
@@ -82,229 +92,229 @@ void setup(){
       NULL,      // Task handle.
       0          // Core where the task should run
     );
+}
+
+const float gxLow  = 0.0;
+const float gxHigh = 100.0;
+const float gyLow  = 0;
+const float gyHigh = 2048;
+
+void setupDisplay() {
     tft.init();
     tft.setRotation(3);
     tft.fillScreen(TFT_BLACK);
-    analogMeter(); // Draw analogue meter
-    updateTime = millis(); // Next update time
+    
+  // Colour zones are set as a start and end percentage of full scale (0-100)
+  // If start and end of a colour zone are the same then that colour is not used
+  //            --Red--  -Org-   -Yell-  -Grn-
+  //amps.setZones(75, 100, 50, 75, 25, 50, 0, 25); // Example here red starts at 75% and ends at 100% of full scale
+  // Meter is 239 pixels wide and 126 pixels high
+  //amps.analogMeter(0, 0, 2048.0, "ADC", "0", "512", "1024", "1536", "2048");    // Draw analogue meter at 0, 0
+
+  // Colour draw order is red, orange, yellow, green. So red can be full scale with green drawn
+  // last on top to indicate a "safe" zone.
+  //             -Red-   -Org-  -Yell-  -Grn-
+//  volts.setZones(0, 100, 25, 75, 0, 0, 40, 60);
+//  volts.analogMeter(0, 120, 10.0, "V", "0", "2.5", "5", "7.5", "10"); // Draw analogue meter at 0, 128
+//  uint16_t x = 200;
+//  uint16_t y = 1;
+
+// Graph area is 300 pixels wide, 150 pixels high, dark grey background
+  //graph.createGraph(GRAPH_W, GRAPH_H, tft.color565(5, 5, 5));
+
+  // x scale units is from 0 to 100, y scale units is -512 to 512
+  //graph.setGraphScale(gxLow, gxHigh, gyLow, gyHigh);
+
+  // X grid starts at 0 with lines every 20 x-scale units
+  // Y grid starts at -512 with lines every 64 y-scale units
+  // blue grid
+  //graph.setGraphGrid(gxLow, 25, gyLow, 256.0, TFT_BLUE);
+
+  // Draw empty graph, top left corner at pixel coordinate 40,10 on TFT
+  //graph.drawGraph(GRAPH_POS_X, GRAPH_POS_Y);
+
+//  trace.startTrace(TFT_WHITE);
+//    xTaskCreatePinnedToCore (
+//      displaytask,     // Function to implement the task
+//      "tft",   // Name of the task
+//      2000,      // Stack size in bytes
+//      NULL,      // Task input parameter
+//      0,         // Priority of the task
+//      NULL,      // Task handle.
+//      0          // Core where the task should run
+//    );
+}
+
+void setupButtons() {
+  pinMode(SWITCH1_PIN,INPUT);
+  pinMode(SWITCH2_PIN,INPUT);
+  pinMode(DREHSWITCH_PIN,INPUT);
+  pinMode(MULTISWITCH_PIN,INPUT);
+  // Configure the ButtonConfig with the event handler, and enable all higher
+  // level events.
+  drehswitchButtonConfig.setEventHandler(drehswitchEventListener);
+  drehswitchButtonConfig.setFeature(ButtonConfig::kFeatureClick);
+  frontplateButtonConfig.setEventHandler(frontplateEventListener);
+  frontplateButtonConfig.setFeature(ButtonConfig::kFeatureClick);
+  frontplateButtonConfig.setFeature(ButtonConfig::kFeatureDoubleClick);
+  frontplateButtonConfig.setFeature(ButtonConfig::kFeatureLongPress);
+  
     xTaskCreatePinnedToCore (
-      displaytask,     // Function to implement the task
-      "tft",   // Name of the task
-      1000,      // Stack size in bytes
+      buttontask,     // Function to implement the task
+      "btn",   // Name of the task
+      5000,      // Stack size in bytes
       NULL,      // Task input parameter
       0,         // Priority of the task
       NULL,      // Task handle.
       0          // Core where the task should run
     );
-
 }
+void setupTouch() {
+uint16_t calibrationData[5];
+  uint8_t calDataOK = 0;
+
+  Serial.begin(115200);
+  Serial.println("starting");
+
+  tft.init();
+
+  tft.setRotation(3);
+  tft.fillScreen((0xFFFF));
+
+  tft.setCursor(20, 0, 2);
+  tft.setTextColor(TFT_BLACK, TFT_WHITE);  tft.setTextSize(1);
+  tft.println("calibration run");
+
+  // check file system
+  if (!SPIFFS.begin()) {
+    Serial.println("formating file system");
+
+    SPIFFS.format();
+    SPIFFS.begin();
+  }
+
+  // check if calibration file exists
+  if (SPIFFS.exists(CALIBRATION_FILE)) {
+    File f = SPIFFS.open(CALIBRATION_FILE, "r");
+    if (f) {
+      if (f.readBytes((char *)calibrationData, 14) == 14)
+        calDataOK = 1;
+      f.close();
+    }
+  }
+  if (calDataOK) {
+    // calibration data valid
+    tft.setTouch(calibrationData);
+  } else {
+    // data not valid. recalibrate
+    tft.calibrateTouch(calibrationData, TFT_WHITE, TFT_RED, 15);
+    // store data
+    File f = SPIFFS.open(CALIBRATION_FILE, "w");
+    if (f) {
+      f.write((const unsigned char *)calibrationData, 14);
+      f.close();
+    }
+  }
+
+  tft.fillScreen((0xFFFF));
+}
+
+void setup(){
+    Serial.begin(115200);
+    setupLeds();
+    setupButtons();
+//    setupTouch();
+    setupDisplay();
+}
+
 void ledtask (void* pvParameters) {
     while(42) {
       ledbar.service();
     }
 }
 
-void displaytask(void* pvParameters) {
-    while(42) {}
-  if (updateTime <= millis()) {
-    updateTime = millis() + 35; // Update meter every 35 milliseconds
- 
-    // Create a Sine wave for testing
-    d += 4; if (d >= 360) d = 0;
-    value[0] = 50 + 50 * sin((d + 0) * 0.0174532925);
-    //value[0] = random(0,100);
-    //unsigned long tt = millis();
-    plotNeedle(value[0], 0); // It takes between 2 and 14ms to replot the needle with zero delay
-    //Serial.println(millis()-tt);
-  }
-}
-void loop() {
-    loopCount++;
-    if ( (millis()-startTime)>5000 ) {
-        Serial.print("Average loops per second = ");
-        Serial.println(loopCount/5);
-        startTime = millis();
-        loopCount = 0;
-    }
-
-    // Fills frontPlate.key[ ] array with up-to 10 active keys.
-    // Returns true if there are ANY active keys.
-    if (frontPlate.getKeys())
-    {
-        for (int i=0; i<LIST_MAX; i++)   // Scan the whole key list.
-        {
-            if ( frontPlate.key[i].stateChanged )   // Only find keys that have changed state.
-            {
-                switch (frontPlate.key[i].kstate) {  // Report active key state : IDLE, PRESSED, HOLD, or RELEASED
-                    case PRESSED:
-                    msg = " PRESSED.";
-                break;
-                    case HOLD:
-                    msg = " HOLD.";
-                break;
-                    case RELEASED:
-                    msg = " RELEASED.";
-                break;
-                    case IDLE:
-                    msg = " IDLE.";
-                }
-                Serial.print("Key ");
-                Serial.print(frontPlate.key[i].kchar);
-                Serial.println(msg);
-            }
-        }
-    }
-}
-
-
-// #########################################################################
-//  Draw the analogue meter on the screen
-// #########################################################################
-void analogMeter()
-{
-
-  // Meter outline
-  tft.fillRect(0, 0, M_SIZE*239, M_SIZE*131, TFT_GREY);
-  tft.fillRect(1, M_SIZE*3, M_SIZE*234, M_SIZE*125, TFT_WHITE);
-
-  tft.setTextColor(TFT_BLACK);  // Text colour
-
-  // Draw ticks every 5 degrees from -50 to +50 degrees (100 deg. FSD swing)
-  for (int i = -50; i < 51; i += 5) {
-    // Long scale tick length
-    int tl = 15;
-
-    // Coodinates of tick to draw
-    float sx = cos((i - 90) * 0.0174532925);
-    float sy = sin((i - 90) * 0.0174532925);
-    uint16_t x0 = sx * (M_SIZE*100 + tl) + M_SIZE*120;
-    uint16_t y0 = sy * (M_SIZE*100 + tl) + M_SIZE*150;
-    uint16_t x1 = sx * M_SIZE*100 + M_SIZE*120;
-    uint16_t y1 = sy * M_SIZE*100 + M_SIZE*150;
-
-    // Coordinates of next tick for zone fill
-    float sx2 = cos((i + 5 - 90) * 0.0174532925);
-    float sy2 = sin((i + 5 - 90) * 0.0174532925);
-    int x2 = sx2 * (M_SIZE*100 + tl) + M_SIZE*120;
-    int y2 = sy2 * (M_SIZE*100 + tl) + M_SIZE*150;
-    int x3 = sx2 * M_SIZE*100 + M_SIZE*120;
-    int y3 = sy2 * M_SIZE*100 + M_SIZE*150;
-
-    // Yellow zone limits
-    //if (i >= -50 && i < 0) {
-    //  tft.fillTriangle(x0, y0, x1, y1, x2, y2, TFT_YELLOW);
-    //  tft.fillTriangle(x1, y1, x2, y2, x3, y3, TFT_YELLOW);
-    //}
-
-    // Green zone limits
-    if (i >= 0 && i < 25) {
-      tft.fillTriangle(x0, y0, x1, y1, x2, y2, TFT_GREEN);
-      tft.fillTriangle(x1, y1, x2, y2, x3, y3, TFT_GREEN);
-    }
-
-    // Orange zone limits
-    if (i >= 25 && i < 50) {
-      tft.fillTriangle(x0, y0, x1, y1, x2, y2, TFT_ORANGE);
-      tft.fillTriangle(x1, y1, x2, y2, x3, y3, TFT_ORANGE);
-    }
-
-    // Short scale tick length
-    if (i % 25 != 0) tl = 8;
-
-    // Recalculate coords incase tick lenght changed
-    x0 = sx * (M_SIZE*100 + tl) + M_SIZE*120;
-    y0 = sy * (M_SIZE*100 + tl) + M_SIZE*150;
-    x1 = sx * M_SIZE*100 + M_SIZE*120;
-    y1 = sy * M_SIZE*100 + M_SIZE*150;
-
-    // Draw tick
-    tft.drawLine(x0, y0, x1, y1, TFT_BLACK);
-
-    // Check if labels should be drawn, with position tweaks
-    if (i % 25 == 0) {
-      // Calculate label positions
-      x0 = sx * (M_SIZE*100 + tl + 10) + M_SIZE*120;
-      y0 = sy * (M_SIZE*100 + tl + 10) + M_SIZE*150;
-      switch (i / 25) {
-        case -2: tft.drawCentreString("0", x0+4, y0-4, 1); break;
-        case -1: tft.drawCentreString("25", x0+2, y0, 1); break;
-        case 0: tft.drawCentreString("50", x0, y0, 1); break;
-        case 1: tft.drawCentreString("75", x0, y0, 1); break;
-        case 2: tft.drawCentreString("100", x0-2, y0-4, 1); break;
+void buttontask (void* pvParameters) {
+    static uint32_t updateTime = 0;  
+    while(42) {
+      if (millis() - updateTime >= BUTTON_READ_PERIOD) 
+      {
+        updateTime = millis();
+        drehswitchButtonConfig.checkButtons();
+        frontplateButtonConfig.checkButtons();
       }
     }
+}
+void displaytask(void* pvParameters) {
+  static float gx = 0.0;
+  static float delta = 10.0;
+  uint16_t buttonValue = 0;
+  while(1) {
+    static int d = 0;
+    static uint32_t updateTime = 0;  
 
-    // Now draw the arc of the scale
-    sx = cos((i + 5 - 90) * 0.0174532925);
-    sy = sin((i + 5 - 90) * 0.0174532925);
-    x0 = sx * M_SIZE*100 + M_SIZE*120;
-    y0 = sy * M_SIZE*100 + M_SIZE*150;
-    // Draw scale arc, don't draw the last part
-    if (i < 50) tft.drawLine(x0, y0, x1, y1, TFT_BLACK);
+    if (millis() - updateTime >= DISPLAY_LOOP_PERIOD) 
+    {
+      updateTime = millis();
+
+      float meterValue;
+      buttonValue = analogRead(MULTISWITCH_PIN);
+      amps.updateNeedle(buttonValue, 0);
+
+      trace.addPoint(gx, buttonValue);
+      gx += 1.0;
+      // If the end of the graph x ais is reached start a new trace at 0.0,0.0
+      if (gx > gxHigh) {
+        gx = 0.0;
+        // Draw empty graph at 40,10 on display to clear old one
+        graph.drawGraph(GRAPH_POS_X, GRAPH_POS_Y);
+        // Start new trace
+        trace.startTrace(TFT_GREEN);
+      }
+    }
   }
-
-  tft.drawString("%RH", M_SIZE*(3 + 230 - 40), M_SIZE*(119 - 20), 2); // Units at bottom right
-  tft.drawCentreString("%RH", M_SIZE*120, M_SIZE*75, 4); // Comment out to avoid font 4
-  tft.drawRect(1, M_SIZE*3, M_SIZE*236, M_SIZE*126, TFT_BLACK); // Draw bezel line
-
-  plotNeedle(0, 0); // Put meter needle at 0
 }
 
-// #########################################################################
-// Update needle position
-// This function is blocking while needle moves, time depends on ms_delay
-// 10ms minimises needle flicker if text is drawn within needle sweep area
-// Smaller values OK if text not in sweep area, zero for instant movement but
-// does not look realistic... (note: 100 increments for full scale deflection)
-// #########################################################################
-void plotNeedle(int value, byte ms_delay)
-{
-  tft.setTextColor(TFT_BLACK, TFT_WHITE);
-  char buf[8]; dtostrf(value, 4, 0, buf);
-  tft.drawRightString(buf, 33, M_SIZE*(119 - 20), 2);
+void loop() {
+  delay(1000);
+}
 
-  if (value < -10) value = -10; // Limit value to emulate needle end stops
-  if (value > 110) value = 110;
-
-  // Move the needle until new value reached
-  while (!(value == old_analog)) {
-    if (old_analog < value) old_analog++;
-    else old_analog--;
-
-    if (ms_delay == 0) old_analog = value; // Update immediately if delay is 0
-
-    float sdeg = map(old_analog, -10, 110, -150, -30); // Map value to angle
-    // Calculate tip of needle coords
-    float sx = cos(sdeg * 0.0174532925);
-    float sy = sin(sdeg * 0.0174532925);
-
-    // Calculate x delta of needle start (does not start at pivot point)
-    float tx = tan((sdeg + 90) * 0.0174532925);
-
-    // Erase old needle image
-    tft.drawLine(M_SIZE*(120 + 24 * ltx) - 1, M_SIZE*(150 - 24), osx - 1, osy, TFT_WHITE);
-    tft.drawLine(M_SIZE*(120 + 24 * ltx), M_SIZE*(150 - 24), osx, osy, TFT_WHITE);
-    tft.drawLine(M_SIZE*(120 + 24 * ltx) + 1, M_SIZE*(150 - 24), osx + 1, osy, TFT_WHITE);
-
-    // Re-plot text under needle
-    tft.setTextColor(TFT_BLACK, TFT_WHITE);
-    tft.drawCentreString("%RH", M_SIZE*120, M_SIZE*75, 4); // // Comment out to avoid font 4
-
-    // Store new needle end coords for next erase
-    ltx = tx;
-    osx = M_SIZE*(sx * 98 + 120);
-    osy = M_SIZE*(sy * 98 + 150);
-
-    // Draw the needle in the new postion, magenta makes needle a bit bolder
-    // draws 3 lines to thicken needle
-    tft.drawLine(M_SIZE*(120 + 24 * ltx) - 1, M_SIZE*(150 - 24), osx - 1, osy, TFT_RED);
-    tft.drawLine(M_SIZE*(120 + 24 * ltx), M_SIZE*(150 - 24), osx, osy, TFT_MAGENTA);
-    tft.drawLine(M_SIZE*(120 + 24 * ltx) + 1, M_SIZE*(150 - 24), osx + 1, osy, TFT_RED);
-
-    // Slow needle down slightly as it approaches new postion
-    if (abs(old_analog - value) < 10) ms_delay += ms_delay / 5;
-
-    // Wait before next update
-    delay(ms_delay);
+void drehswitchEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState) {
+  String msg;
+  if(eventType == AceButton::kEventPressed) {
+    msg = button->getPin();
+    tft.setTextColor(TFT_DARKGREEN,TFT_BLACK);
+    tft.drawCentreString(msg,290,30,4);
   }
+}
+
+struct position {
+  uint16_t x;
+  uint16_t y;
+  uint16_t fgColor;
+  uint16_t bgColor;
+};
+
+position btnIndicators[MULTISWITCH_POSITIONS] = {
+  {310, 220, TFT_GREEN,TFT_BLACK},
+  {240,220,TFT_GREEN,TFT_BLACK},
+  {100,220,TFT_GREEN,TFT_BLACK},
+  {10,220,TFT_GREEN,TFT_BLACK},
+  {160,20,TFT_GREEN,TFT_BLACK}
+};
+
+void frontplateEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState) {
+  
+  position p;
+  p = btnIndicators[button->getPin()];
+  if(eventType == AceButton::kEventPressed) {
+    tft.fillSmoothCircle(p.x,p.y,10,p.fgColor,p.bgColor);
+  } else {
+    tft.fillCircle(p.x,p.y,12,p.bgColor);
+  }
+}
+
+
+float mapValue(float ip, float ipmin, float ipmax, float tomin, float tomax)
+{
+  return tomin + (((tomax - tomin) * (ip - ipmin))/ (ipmax - ipmin));
 }
