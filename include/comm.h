@@ -10,7 +10,7 @@
 
 void serialReadFunction( void * parameter);
 void setupCommports();
-void serialSendFunction(void* pvParameters);
+void serialSendLightdataFunction(void* pvParameters);
 
 typedef struct{
   uint16_t  start;
@@ -44,29 +44,19 @@ typedef struct{
 } LightboxDataPacket;
 static LightboxDataPacket LightboxData;
 
+#define LIGHT_L 1
+#define LIGHT_R 2
+#define LIGHT_SEAT 3
+#define LIGHT_BOTTOM 4
+
 typedef struct{
   uint16_t  start;
-  int8_t   buttons; // 8 bits, set/not set 
-  int8_t   mode; // number 1-5 corresponding to dial-button
+  int8_t   light;
+  int8_t   effect;
+  int8_t   brightness;
+  int8_t   speed;
   uint16_t  checksum;
-} ButtonboxDataPacket;
-static ButtonboxDataPacket ButtonData;
-
-typedef struct {
-  uint8_t steeringButtons;
-  uint8_t modeButton;
-} buttondata_struct;
-
-
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte)  \
-  ((byte) & 0x80 ? '1' : '0'), \
-  ((byte) & 0x40 ? '1' : '0'), \
-  ((byte) & 0x20 ? '1' : '0'), \
-  ((byte) & 0x10 ? '1' : '0'), \
-  ((byte) & 0x08 ? '1' : '0'), \
-  ((byte) & 0x04 ? '1' : '0'), \
-  ((byte) & 0x02 ? '1' : '0'), \
-  ((byte) & 0x01 ? '1' : '0') 
+} LightsDataPacket;
+static LightsDataPacket LightsData;
 
 #endif

@@ -2,7 +2,7 @@
 #include "taskmessages.h"
 #include "comm.h"
 
-extern QueueHandle_t serialSendQueue;
+extern QueueHandle_t serialSendLightdataQueue;
 extern QueueHandle_t ledbarDataQueue;
 extern QueueHandle_t screenDataQueue;
 
@@ -21,9 +21,10 @@ void setupCommports() {
         0,  /* Priority of the task */
         NULL,  /* Task handle. */
         0); /* Core where the task should run */
-    xTaskCreatePinnedToCore( serialSendFunction, "serialS", 10000, NULL, 0, NULL, 0);
+    xTaskCreatePinnedToCore( serialSendLightdataFunction, "serialS", 10000, NULL, 0, NULL, 0);
 }
 
+// receive from Lightdata or Cardata from Lightbox
 void serialReadFunction( void * parameter) {
     uint8_t idx = 0;                            // Index for new data pointer
     uint16_t bufStartFrame;                     // Buffer Start Frame
@@ -67,7 +68,7 @@ void serialReadFunction( void * parameter) {
             }
         }	
         
-        // Check if we reached the end of the Datapacket type
+        // Check if we reached the end of the LightboxDataPacket
         if ( frameType == START_FRAME_LIGHTDATA && idx == sizeof(LightboxDataPacket) ) {
             uint16_t checksum;
             checksum = (uint16_t)(LightboxData.start ^ LightboxData.encoderPosition ^ LightboxData.encoderDirection);
@@ -75,13 +76,16 @@ void serialReadFunction( void * parameter) {
             // we received a valid packet with Lightboxdata
             if (LightboxData.start == START_FRAME_LIGHTDATA && checksum == LightboxData.checksum) {
             //    messageToLED.speed = LightboxData.encoderPosition*100;
-                messageToLED.brightness = LightboxData.encoderPosition;
+                messageToLED.brightness = 2;
+                messageToScreen.batVoltage = LightboxData.encoderPosition/10.0;
                 xQueueSend(ledbarDataQueue, (void*)&messageToLED, 0);
+                xQueueSend(screenDataQueue, (void*)&messageToScreen, 0);
             }
             idx = 0;    // Reset index (it prevents to enter in this if condition in the next cycle)
             frameType = 0; // next frame can be different type
         }
 
+        // Check if we reached the end of the HovercarDataPacket
         if ( frameType == START_FRAME_CARDATA && idx == sizeof(HovercarDataPacket) ) {
             uint16_t checksum;
             checksum   = (uint16_t)(carData.start ^ carData.cmd1 ^ carData.cmd2 ^ carData.speedR_meas ^ carData.speedL_meas 
@@ -89,7 +93,9 @@ void serialReadFunction( void * parameter) {
 
             // we received a valid packet with cardata
             if (carData.start == START_FRAME_CARDATA && checksum == carData.checksum) {
-                messageToScreen.speed = (carData.speedL_meas + carData.speedR_meas) / 2.0;
+                messageToScreen.speed = (carData.speedL_meas - carData.speedR_meas) / 2.0  // average rpm, speeR is negative
+                / 60.0 * 0.817 // m/s
+                * 3.6; // km/h
                 messageToScreen.batVoltage = carData.batVoltage/100.0;
                 messageToScreen.boardTemp = carData.boardTemp;
                 xQueueSend(screenDataQueue, (void*)&messageToScreen, 0);
@@ -103,15 +109,17 @@ void serialReadFunction( void * parameter) {
     }
 }
 
-void serialSendFunction(void* pvParameters) {
-    buttondata_struct receivedMessage;
+void serialSendLightdataFunction(void* pvParameters) {
+    lightsMessage_struct receivedMessage;
     while(1) {
-        if (xQueueReceive(serialSendQueue, (void *)&receivedMessage, portMAX_DELAY /* Wait infinitely for new messages */) == pdTRUE) {
-            ButtonData.start	        = (uint16_t)START_FRAME_BUTTONDATA;
-            ButtonData.buttons          = receivedMessage.steeringButtons;
-            ButtonData.mode             = receivedMessage.modeButton;
-            ButtonData.checksum       = (uint16_t)(ButtonData.start ^ ButtonData.buttons ^ ButtonData.mode);
-            LightboxPort.write((uint8_t *) &ButtonData, sizeof(ButtonData));
+        if (xQueueReceive(serialSendLightdataQueue, (void *)&receivedMessage, portMAX_DELAY /* Wait infinitely for new messages */) == pdTRUE) {
+            LightsData.start	        = (uint16_t)START_FRAME_BUTTONDATA;
+            LightsData.light          = receivedMessage.light;
+            LightsData.effect          = receivedMessage.effect;
+            LightsData.brightness          = receivedMessage.brightness;
+            LightsData.speed             = receivedMessage.speed;
+            LightsData.checksum       = (uint16_t)(LightsData.start ^ LightsData.light ^ LightsData.effect ^ LightsData.brightness ^ LightsData.speed);
+            LightboxPort.write((uint8_t *) &LightsData, sizeof(LightsData));
         }
     }
 }
