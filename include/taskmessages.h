@@ -62,12 +62,16 @@ typedef struct {
 #define LIGHT_R 2
 #define LIGHT_SEAT 3
 #define LIGHT_BOTTOM 4
+#define LIGHTS_ALL 0xF
+
+#define LIGHTCOMMAND_BRIGHTNESS 1
+#define LIGHTCOMMAND_EFFECT 2
+#define LIGHTCOMMAND_SPEED 3
 
 typedef struct{
   int8_t   light;
-  int8_t   effect;
-  int8_t   brightness;
-  int8_t   speed;
-} lightsMessage_struct;
+  int8_t   command;
+  int8_t   value;
+ } lightsMessage_struct;
 
 #endif

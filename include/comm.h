@@ -48,13 +48,17 @@ static LightboxDataPacket LightboxData;
 #define LIGHT_R 2
 #define LIGHT_SEAT 3
 #define LIGHT_BOTTOM 4
+#define LIGHTS_ALL 0xF
+
+#define LIGHTCOMMAND_BRIGHTNESS 1
+#define LIGHTCOMMAND_EFFECT 2
+#define LIGHTCOMMAND_SPEED 3
 
 typedef struct{
   uint16_t  start;
   int8_t   light;
-  int8_t   effect;
-  int8_t   brightness;
-  int8_t   speed;
+  int8_t   command;
+  int8_t   value;
   uint16_t  checksum;
 } LightsDataPacket;
 static LightsDataPacket LightsData;

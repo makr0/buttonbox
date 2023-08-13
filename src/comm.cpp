@@ -34,6 +34,7 @@ void serialReadFunction( void * parameter) {
     uint16_t frameType = 0;
     ledMessage_struct messageToLED;
     screendata_struct messageToScreen;
+    lightsMessage_struct messageToLightbox;
     while(1) {
 
         // Check for new data availability in the Serial buffer
@@ -76,10 +77,16 @@ void serialReadFunction( void * parameter) {
             // we received a valid packet with Lightboxdata
             if (LightboxData.start == START_FRAME_LIGHTDATA && checksum == LightboxData.checksum) {
             //    messageToLED.speed = LightboxData.encoderPosition*100;
-                messageToLED.brightness = 2;
-                messageToScreen.batVoltage = LightboxData.encoderPosition/10.0;
+                messageToLED.brightness = LightboxData.encoderPosition;
                 xQueueSend(ledbarDataQueue, (void*)&messageToLED, 0);
-                xQueueSend(screenDataQueue, (void*)&messageToScreen, 0);
+                messageToLightbox.command = LIGHTCOMMAND_BRIGHTNESS;
+                messageToLightbox.value=LightboxData.encoderPosition;
+                messageToLightbox.light = LIGHT_L;
+                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 0);
+                messageToLightbox.light = LIGHT_R;
+                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 0);
+                messageToLightbox.light = LIGHT_SEAT;
+                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 0);
             }
             idx = 0;    // Reset index (it prevents to enter in this if condition in the next cycle)
             frameType = 0; // next frame can be different type
@@ -113,12 +120,11 @@ void serialSendLightdataFunction(void* pvParameters) {
     lightsMessage_struct receivedMessage;
     while(1) {
         if (xQueueReceive(serialSendLightdataQueue, (void *)&receivedMessage, portMAX_DELAY /* Wait infinitely for new messages */) == pdTRUE) {
-            LightsData.start	        = (uint16_t)START_FRAME_BUTTONDATA;
+            LightsData.start	      = (uint16_t)START_FRAME_BUTTONDATA;
             LightsData.light          = receivedMessage.light;
-            LightsData.effect          = receivedMessage.effect;
-            LightsData.brightness          = receivedMessage.brightness;
-            LightsData.speed             = receivedMessage.speed;
-            LightsData.checksum       = (uint16_t)(LightsData.start ^ LightsData.light ^ LightsData.effect ^ LightsData.brightness ^ LightsData.speed);
+            LightsData.command        = receivedMessage.command;
+            LightsData.value          = receivedMessage.value;
+            LightsData.checksum       = (uint16_t)(LightsData.start ^ LightsData.light ^ LightsData.command ^ LightsData.value);
             LightboxPort.write((uint8_t *) &LightsData, sizeof(LightsData));
         }
     }
