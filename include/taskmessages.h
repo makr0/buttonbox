@@ -7,13 +7,17 @@
 #define BUTTON_RELEASE 2
 
 typedef struct {
-  int16_t   cmd1;
-  int16_t   cmd2;
-  int16_t   speed;
-  float   batVoltage;
+  int16_t   cmd;
+  float     speed;
+  float     batVoltage;
   int16_t   boardTemp;
+  float     currentDC;
+  uint8_t   drivingBackwards;
+  uint32_t  revolutions_l;
+  uint32_t  revolutions_r;
   uint8_t   pushButtons;
-  uint8_t   switchButtons;
+  uint8_t   switchEvent;
+  uint8_t   switchButton;
   uint8_t   modeSwitch;
   uint8_t   buttonState;
 } screendata_struct;
@@ -47,7 +51,7 @@ typedef struct {
 
 typedef struct {
   long encoderPosition;
-  uint8_t direction;
+  uint8_t direction;    // 1:right, 2:left
 } encoderMessage_struct;
 
 // for the ledstrip on this box
@@ -73,5 +77,10 @@ typedef struct{
   int8_t   command;
   int8_t   value;
  } lightsMessage_struct;
+
+#define GUARD_TFT_BEGIN if( xSemaphoreTake( tftSemaphore, ( TickType_t ) 10 ) == pdTRUE ) {
+#define GUARD_TFT_END } xSemaphoreGive( tftSemaphore );
+//#define GUARD_TFT_BEGIN
+//#define GUARD_TFT_END
 
 #endif

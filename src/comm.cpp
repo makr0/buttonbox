@@ -5,6 +5,8 @@
 extern QueueHandle_t serialSendLightdataQueue;
 extern QueueHandle_t ledbarDataQueue;
 extern QueueHandle_t screenDataQueue;
+extern QueueHandle_t ledMessageToScreenQueue;
+extern QueueHandle_t encoderEventsQueue;
 
 #define LIGHTBOX_RX_PIN 32
 #define LIGHTBOX_TX_PIN 33
@@ -33,9 +35,12 @@ void serialReadFunction( void * parameter) {
     char incomingBytePrev;
     uint16_t frameType = 0;
     ledMessage_struct messageToLED;
+    ledMessage_struct ledMessageToScreen;
     screendata_struct messageToScreen;
     lightsMessage_struct messageToLightbox;
+    encoderMessage_struct encoderMessage;
     while(1) {
+        
 
         // Check for new data availability in the Serial buffer
         if (LightboxPort.available()) {
@@ -76,17 +81,23 @@ void serialReadFunction( void * parameter) {
 
             // we received a valid packet with Lightboxdata
             if (LightboxData.start == START_FRAME_LIGHTDATA && checksum == LightboxData.checksum) {
+                encoderMessage.direction = LightboxData.encoderDirection;
+                encoderMessage.encoderPosition = LightboxData.encoderPosition;
+                xQueueSend(encoderEventsQueue, (void*)&encoderMessage, 0);
+
             //    messageToLED.speed = LightboxData.encoderPosition*100;
                 messageToLED.brightness = LightboxData.encoderPosition;
                 xQueueSend(ledbarDataQueue, (void*)&messageToLED, 0);
+                ledMessageToScreen.brightness=messageToLED.brightness;
+                xQueueSend(ledMessageToScreenQueue, (void*)&ledMessageToScreen, 0);
                 messageToLightbox.command = LIGHTCOMMAND_BRIGHTNESS;
                 messageToLightbox.value=LightboxData.encoderPosition;
                 messageToLightbox.light = LIGHT_L;
-                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 0);
+                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
                 messageToLightbox.light = LIGHT_R;
-                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 0);
+                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
                 messageToLightbox.light = LIGHT_SEAT;
-                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 0);
+                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
             }
             idx = 0;    // Reset index (it prevents to enter in this if condition in the next cycle)
             frameType = 0; // next frame can be different type
@@ -96,7 +107,8 @@ void serialReadFunction( void * parameter) {
         if ( frameType == START_FRAME_CARDATA && idx == sizeof(HovercarDataPacket) ) {
             uint16_t checksum;
             checksum   = (uint16_t)(carData.start ^ carData.cmd1 ^ carData.cmd2 ^ carData.speedR_meas ^ carData.speedL_meas 
-                                           ^ carData.batVoltage ^ carData.boardTemp ^ carData.cmdLed);
+                                           ^ carData.batVoltage ^ carData.boardTemp ^ carData.currentDC ^ carData.drivingBackwards
+                                           ^ carData.revolutions_l ^ carData.revolutions_r);
 
             // we received a valid packet with cardata
             if (carData.start == START_FRAME_CARDATA && checksum == carData.checksum) {
@@ -105,6 +117,11 @@ void serialReadFunction( void * parameter) {
                 * 3.6; // km/h
                 messageToScreen.batVoltage = carData.batVoltage/100.0;
                 messageToScreen.boardTemp = carData.boardTemp;
+                messageToScreen.cmd = carData.cmd1-carData.cmd2;
+                messageToScreen.currentDC = carData.currentDC/100.0;
+                messageToScreen.drivingBackwards = carData.drivingBackwards;
+                messageToScreen.revolutions_l = carData.revolutions_l;
+                messageToScreen.revolutions_r = carData.revolutions_r;
                 xQueueSend(screenDataQueue, (void*)&messageToScreen, 0);
             }
             idx = 0;    // Reset index (it prevents to enter in this if condition in the next cycle)

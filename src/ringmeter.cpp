@@ -1,6 +1,7 @@
 #include "OpenFontRender.h"
 #include "ringmeter.h"
 
+
 // #########################################################################
 // Meter constructor
 // #########################################################################
@@ -13,6 +14,15 @@
     middle_y = 0;
     ringcolor = TFT_GREEN;
     ntft = tft;
+    useAverager = true;
+    averagerSize = 20;
+    averagerIndex = 0;
+    lastAverage = 0;
+    currentAverage =0;
+    for (uint8_t i = averagerSize; i > 0; )
+    {
+      valueAverager[--i] = 0.0; // keeps addValue simpler
+    }
 }
 
 void RingMeterWidget::ringMeter(int x, int y, int r, int thickness, float start, float end, const char *units, int16_t color)
@@ -29,6 +39,7 @@ void RingMeterWidget::ringMeter(int x, int y, int r, int thickness, float start,
     endAngle=360-startAngle;
     meter_unit=units;
     char msg[5];
+    setFormatstring( "%3.1f");
 
     ntft->fillCircle(x, y, r, TFT_BLACK);
     ntft->drawSmoothCircle(x, y, r, TFT_SILVER, TFT_BLACK);
@@ -44,12 +55,21 @@ void RingMeterWidget::updateValue(float val) {
 
   int val_angle = map(abs(val), startValue, endValue, 45, 360-45);
   val_angle = constrain(val_angle,startAngle,endAngle);
-
-  if (last_angle != val_angle) {
+  if(useAverager) {
+    addValueToAverager(val);
+    currentAverage = getAverage();
+  } else {
+    currentAverage = val;
+  }
+  if(round(currentAverage) != round(lastAverage)) {
+    ntft->fillRect(middle_x-radius+ringthickness+3,middle_y-10,(radius*2)-ringthickness-15,20,TFT_BLACK);
     char msg[5];
-    sprintf(msg,"%3.1f",val);
+    sprintf(msg,formatstring,currentAverage);
     ntft->setTextColor(TFT_WHITE,TFT_BLACK);
     ntft->drawCentreString(msg,middle_x,middle_y-7,2);
+    lastAverage = currentAverage;
+  }
+  if (last_angle != val_angle) {
     // Update the arc, only the zone between last_angle and new val_angle is updated
     if (val_angle > last_angle) {
       ntft->drawArc(middle_x, middle_y, radius, radius - ringthickness, last_angle, val_angle, ringcolor, TFT_BLACK);
@@ -59,4 +79,29 @@ void RingMeterWidget::updateValue(float val) {
     }
     last_angle = val_angle; 
   }
+}
+
+void RingMeterWidget::setFormatstring(String format) {
+  format.toCharArray(formatstring, sizeof(formatstring),0);
+}
+
+void RingMeterWidget::addValueToAverager(float val) {
+  valueAverager[averagerIndex] = val;
+  averagerIndex++;
+
+  if (averagerIndex == averagerSize) averagerIndex = 0;  // faster than %
+
+}
+float RingMeterWidget::getAverage() {
+  float _sum = 0;
+  for (uint8_t i = 0; i < averagerSize; i++)
+  {
+    _sum += valueAverager[i];
+  }
+  return _sum / averagerSize;   // multiplication is faster ==> extra admin
+
+}
+
+void RingMeterWidget::setUseAverager(bool u){
+  useAverager = u;
 }

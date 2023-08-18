@@ -20,10 +20,14 @@ typedef struct{
   int16_t   speedL_meas;
   int16_t   batVoltage;
   int16_t   boardTemp;
-  uint16_t 	cmdLed;
+  int16_t   currentDC;
+  uint8_t   drivingBackwards;
+  uint32_t  revolutions_l;
+  uint32_t  revolutions_r;
   uint16_t  checksum;
 } HovercarDataPacket;
 static HovercarDataPacket carData;
+
 
 typedef struct{
   uint16_t  start;

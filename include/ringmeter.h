@@ -12,6 +12,9 @@ class RingMeterWidget
     RingMeterWidget(TFT_eSPI* tft);
     void updateValue(float val);
     void ringMeter(int x, int y, int r, int thickness, float start, float end, const char *units, int16_t color);
+    void setFormatstring(String format);
+    void setUseAverager(bool u);
+
 
   private:
     int ringthickness;
@@ -26,7 +29,16 @@ class RingMeterWidget
     float endValue;
     int startAngle;
     int endAngle;
+    bool useAverager;
     const char* meter_unit;
+    char formatstring[6];
+    float valueAverager[20];
+    uint8_t averagerSize;
+    uint8_t averagerIndex;
+    float lastAverage;
+    float currentAverage;
+    void addValueToAverager(float val);
+    float getAverage();
 };
 
 #endif

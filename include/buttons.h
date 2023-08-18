@@ -15,6 +15,7 @@ using ace_button::LadderButtonConfig;
 
 void setupButtons();
 void buttontask (void* pvParameters);
+void switchEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState);
 void drehswitchEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState);
 void frontplateEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState);
 
