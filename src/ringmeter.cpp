@@ -1,4 +1,3 @@
-#include "OpenFontRender.h"
 #include "ringmeter.h"
 
 

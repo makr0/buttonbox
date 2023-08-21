@@ -50,7 +50,7 @@ const colorDef<uint16_t> colors[6] MEMMODE={
     {
       (uint16_t)Yellow,
       (uint16_t)Yellow,
-      (uint16_t)Red
+      (uint16_t)Green
     }
   },//valColor
   {

@@ -3,7 +3,6 @@
 #include "comm.h"
 
 extern QueueHandle_t serialSendLightdataQueue;
-extern QueueHandle_t ledbarDataQueue;
 extern QueueHandle_t screenDataQueue;
 extern QueueHandle_t ledMessageToScreenQueue;
 extern QueueHandle_t encoderEventsQueue;
@@ -37,7 +36,6 @@ void serialReadFunction( void * parameter) {
     ledMessage_struct messageToLED;
     ledMessage_struct ledMessageToScreen;
     screendata_struct messageToScreen;
-    lightsMessage_struct messageToLightbox;
     encoderMessage_struct encoderMessage;
     while(1) {
         
@@ -84,20 +82,6 @@ void serialReadFunction( void * parameter) {
                 encoderMessage.direction = LightboxData.encoderDirection;
                 encoderMessage.encoderPosition = LightboxData.encoderPosition;
                 xQueueSend(encoderEventsQueue, (void*)&encoderMessage, 0);
-
-            //    messageToLED.speed = LightboxData.encoderPosition*100;
-                messageToLED.brightness = LightboxData.encoderPosition;
-                xQueueSend(ledbarDataQueue, (void*)&messageToLED, 0);
-                ledMessageToScreen.brightness=messageToLED.brightness;
-                xQueueSend(ledMessageToScreenQueue, (void*)&ledMessageToScreen, 0);
-                messageToLightbox.command = LIGHTCOMMAND_BRIGHTNESS;
-                messageToLightbox.value=LightboxData.encoderPosition;
-                messageToLightbox.light = LIGHT_L;
-                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
-                messageToLightbox.light = LIGHT_R;
-                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
-                messageToLightbox.light = LIGHT_SEAT;
-                xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
             }
             idx = 0;    // Reset index (it prevents to enter in this if condition in the next cycle)
             frameType = 0; // next frame can be different type

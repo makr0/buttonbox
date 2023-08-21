@@ -15,11 +15,6 @@ typedef struct {
   uint8_t   drivingBackwards;
   uint32_t  revolutions_l;
   uint32_t  revolutions_r;
-  uint8_t   pushButtons;
-  uint8_t   switchEvent;
-  uint8_t   switchButton;
-  uint8_t   modeSwitch;
-  uint8_t   buttonState;
 } screendata_struct;
 
 typedef struct {

@@ -6,6 +6,7 @@ using ace_button::LadderButtonConfig;
 #include "buttons.h"
 
 extern QueueHandle_t buttonEventsQueue;
+extern QueueHandle_t switchEventsQueue;
 extern QueueHandle_t modeSwitchEventsQueue;
 extern QueueHandle_t serialSendLightdataQueue;
 extern QueueHandle_t ledbarDataQueue;
@@ -64,13 +65,27 @@ void setupButtons() {
   ButtonConfig* switch2Config = switch2.getButtonConfig();
   switch1Config->setEventHandler(switchEventListener);
   switch2Config->setEventHandler(switchEventListener);
+  switchEventListener(&switch1,switch1.isPressedRaw() ? AceButton::kEventPressed:AceButton::kEventReleased,switch1.getLastButtonState());
+  switchEventListener(&switch2,switch2.isPressedRaw() ? AceButton::kEventPressed:AceButton::kEventReleased,switch2.getLastButtonState());
   drehswitchButtonConfig.setEventHandler(drehswitchEventListener);
   drehswitchButtonConfig.setFeature(ButtonConfig::kFeatureClick);
+  for(int i=0; i<DREHSWITCH_POSITIONS;i++) {
+    if(DREHBUTTONS[i]->isPressedRaw()) {
+      drehswitchEventListener(DREHBUTTONS[i],AceButton::kEventPressed,DREHBUTTONS[i]->getLastButtonState());
+    }
+  }
+ 
   frontplateButtonConfig.setEventHandler(frontplateEventListener);
   frontplateButtonConfig.setFeature(ButtonConfig::kFeatureClick);
   frontplateButtonConfig.setFeature(ButtonConfig::kFeatureDoubleClick);
   frontplateButtonConfig.setFeature(ButtonConfig::kFeatureLongPress);
   frontplateButtonConfig.setDebounceDelay(80);
+  for(int i=0; i<MULTISWITCH_POSITIONS;i++) {
+    if(MULTIBUTTONS[i]->isPressedRaw()) {
+      frontplateEventListener(MULTIBUTTONS[i],AceButton::kEventPressed,MULTIBUTTONS[i]->getLastButtonState());
+    }
+  }
+
   
     xTaskCreatePinnedToCore (
       buttontask,     // Function to implement the task
@@ -124,35 +139,11 @@ void frontplateEventListener(AceButton* button, uint8_t eventType, uint8_t butto
 void switchEventListener(AceButton* button, uint8_t eventType, uint8_t buttonState) {
   ledMessage_struct messageToLED;
   ledMessage_struct ledMessageToScreen;
-  screendata_struct messageToScreen;
+  buttonMessage_struct buttonMessage;
   lightsMessage_struct messageToLightbox;
 
   Serial.printf("button %d:%d (%d)\n", button->getPin(), eventType, buttonState);
-  messageToScreen.switchEvent = eventType == AceButton::kEventReleased ? BUTTON_RELEASE : BUTTON_PRESS;
-  messageToScreen.switchButton = button->getPin() == SWITCH1_PIN ? 1 : 2;
-  xQueueSend(screenDataQueue, (void*)&messageToScreen, 0);
-  switch (button->getPin()) {
-    case SWITCH1_PIN: 
-      if(eventType == AceButton::kEventReleased) {
-        messageToLED.brightness=0;
-        messageToLightbox.value=0;
-      }
-      if(eventType == AceButton::kEventPressed) {
-        messageToLED.brightness=20;
-        messageToLightbox.value=20;
-      }
-
-      xQueueSend(ledbarDataQueue, (void*)&messageToLED, 0);
-      messageToLightbox.command = LIGHTCOMMAND_BRIGHTNESS;
-      messageToLightbox.light = LIGHT_L;
-      xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
-      messageToLightbox.light = LIGHT_R;
-      xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
-      messageToLightbox.light = LIGHT_SEAT;
-      xQueueSend(serialSendLightdataQueue, (void*)&messageToLightbox, 10);
-      break;
-    default:
-      break;
-  }
-
+  buttonMessage.event = eventType == AceButton::kEventReleased ? BUTTON_RELEASE : BUTTON_PRESS;
+  buttonMessage.button = button->getPin() == SWITCH1_PIN ? 1 : 2;
+  xQueueSend(switchEventsQueue, (void*)&buttonMessage, 0);
 }

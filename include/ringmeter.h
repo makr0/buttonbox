@@ -1,8 +1,6 @@
 #ifndef ringMeter_h
 #define ringMeter_h
 
-#include "OpenFontRender.h"
-
 #include "Arduino.h"
 #include "TFT_eSPI.h"
 

@@ -2,55 +2,42 @@
 #include "carConfig.h"
 #include "display.h"
 #include "screens/menucolors.h"
+#include <streamFlow.h>
 #include <menu.h>
 #include <menuIO/stringIn.h>
 #include <menuIO/chainStream.h>
 #include <menuIO/TFT_eSPIOut.h>
+#include "Free_Fonts.h" // Include the header file attached to this sketch
+
 extern TFT_eSPI tft;
 
 extern QueueHandle_t screenDataQueue;
 extern QueueHandle_t buttonEventsQueue;
-extern QueueHandle_t encoderEventsQueue;;
+extern QueueHandle_t switchEventsQueue;
+extern QueueHandle_t encoderEventsQueue;
 extern QueueHandle_t screenDebugQueue;
 extern QueueHandle_t ledMessageToScreenQueue;
 extern SemaphoreHandle_t tftSemaphore;
 extern carConfig_t carConfig;
 
-int test=55;
-
 using namespace Menu;
-#define fontW 12
-#define fontH 18
 
-#define MAX_DEPTH 2
+#define MAX_DEPTH 5
 #define textScale 2
-MENU_OUTPUTS(out,MAX_DEPTH
-  ,TFT_eSPI_OUT(tft,colors,6*textScale,9*textScale,{0,0,14,8},{14,0,14,8})
-  ,NONE
-);
-stringIn<0> strIn;//buffer size: 2^5 = 32 bytes, eventually use 0 for a single byte
-menuIn* inputsList[]={&strIn};
+Menu::idx_t outTops[MAX_DEPTH] = {0};
+panel outPanels[] ={{1,1,25,10}};
+Menu::navNode* outPanelsNode[sizeof(outPanels)/sizeof(panel)];
+Menu::panelsList outPanelsList(outPanels,outPanelsNode,sizeof(outPanels)/sizeof(panel));
+Menu::TFT_eSPIOut tftOut(tft,colors,outTops,outPanelsList,3*textScale,9*textScale);
+Menu::serialOut serialO(Serial,outTops);
+Menu::menuOut* out_outPtrs[] = { &tftOut, &serialO };
+Menu::outputsList out(out_outPtrs,sizeof(out_outPtrs)/sizeof(Menu::menuOut*));;
+//stringIn<0> strIn;//buffer size: 2^5 = 32 bytes, eventually use 0 for a single byte
+//serialIn serial(Serial);
+//menuIn* inputsList[]={&strIn,&serial};
+//chainStream<sizeof(inputsList)> in(inputsList);
+menuIn* inputsList[]={};
 chainStream<sizeof(inputsList)> in(inputsList);
-
-result showEvent(eventMask e) {
-  Serial.print("event: ");
-  Serial.println(e);
-  return proceed;
-}
-
-result action1(eventMask e,navNode& nav, prompt &item) {
-  Serial.print("action1 event:");
-  Serial.println(e);
-  Serial.flush();
-  return proceed;
-}
-
-result action2(eventMask e) {
-  Serial.print("actikon2 event:");
-  Serial.println(e);
-  Serial.flush();
-  return quit;
-}
 
 SELECT(carConfig.controlMode,controlModeMenu,"Ctrl mode",doNothing,noEvent,wrapStyle
   ,VALUE("Voltage",1,doNothing,noEvent)
@@ -64,39 +51,38 @@ SELECT(carConfig.controlType,controlTypeMenu,"Ctrl type",doNothing,noEvent,wrapS
   ,VALUE("FOC",2,doNothing,noEvent)
 );
 
-MENU(subMenu,"Sub-Menu",doNothing,anyEvent,wrapStyle
-  ,OP("Sub1",showEvent,enterEvent)
-  ,OP("Sub2",showEvent,enterEvent)
-  ,OP("Sub3",showEvent,enterEvent)
-  ,EXIT("<Back")
-);
-
 MENU(mainMenu,"Main menu",doNothing,noEvent,wrapStyle
-  ,OP("Op1",action1,anyEvent)
-  ,OP("Op2",action2,enterEvent)
-  ,SUBMENU(subMenu)
   ,SUBMENU(controlModeMenu)
   ,SUBMENU(controlTypeMenu)
+  ,FIELD(carConfig.fieldWeakEn,"FW enable","",0,1,1,0,doNothing,noEvent,wrapStyle)
+  ,FIELD(carConfig.fieldWeakLo,"Fw Lo","",0,1500,50,0,doNothing,noEvent,wrapStyle)
+  ,FIELD(carConfig.fieldWeakHi,"Fw Hi","",0,1500,50,0,doNothing,noEvent,wrapStyle)
+  ,FIELD(carConfig.fieldWeakMax,"Fw Max"," A",0,20,1,0,doNothing,noEvent,wrapStyle)
+  ,FIELD(carConfig.phaAdvMax,"phaAdvMax"," deg",0,55,1,0,doNothing,noEvent,wrapStyle)
+  ,FIELD(carConfig.maxRPM,"RPM"," max",0,1500,10,0,doNothing,noEvent,wrapStyle)
 );
 
 
 NAVROOT(nav,mainMenu,MAX_DEPTH,in,out);
-//navNode navCursors[MAX_DEPTH];//objects to control each level of navigation
-//navRoot nav(mainMenu,navCursors,MAX_DEPTH-1,*(Stream*)NULL,out);
 
 void initSetupScreen( TFT_eSPI* tft) {
     tft->setTextColor(TFT_WHITE,TFT_BLACK);
-    tft->drawCentreString("Setup",DISPLAY_WIDTH/2,0,4);
-    tft->drawCentreString("->",10,220,2);
-    tft->drawCentreString("<-",100,220,2);
-    tft->drawCentreString("ok",240,220,2);
+    tft->drawCentreString("ok",10,220,2);
+    tft->drawCentreString("^↑⇧⏫",100,220,2);
+    tft->drawCentreString("V↓⇧⏬",240,220,2);
     tft->drawCentreString("esc",310,220,2);
+    tft->setTextFont(2);
+    nav.refresh();
+    nav.doOutput();
 }
 void updateSetupScreen(TFT_eSPI* tft) {
   char msg[40];
+  uint8_t updateNavOutput=0;
   encoderMessage_struct encoderMessage;
   buttonMessage_struct buttonMessage;
   GUARD_TFT_BEGIN
+    tft->setTextFont(2);
+
     nav.doOutput();//if not doing poll the we need to do output "manualy"
   GUARD_TFT_END
   while(1) {
@@ -106,27 +92,43 @@ void updateSetupScreen(TFT_eSPI* tft) {
         } else {
           nav.doNav(downCmd);
         }
+        updateNavOutput=1;
     }
+    if (xQueueReceive(switchEventsQueue, (void *)&buttonMessage, 0) == pdTRUE) {
+      if(buttonMessage.button == 2) {
+          if(buttonMessage.event == BUTTON_RELEASE) {
+              carConfig.fieldWeakEn=0;
+          }
+          if(buttonMessage.event == BUTTON_PRESS) {
+              carConfig.fieldWeakEn=1;
+          }
+          updateNavOutput=1;
+      }
+  }
+
     if (xQueueReceive(buttonEventsQueue, (void *)&buttonMessage, 0) == pdTRUE) {
       if(buttonMessage.event == BUTTON_PRESS) {
-        if(buttonMessage.button == 3) {
-          nav.doNav(rightCmd);
-        }
-        if(buttonMessage.button == 2) {
-          nav.doNav(leftCmd);
-        }
-        if(buttonMessage.button == 1) {
-          nav.doNav(enterCmd);
-        }
         if(buttonMessage.button == 0) {
           nav.doNav(escCmd);
         }
+        if(buttonMessage.button == 1) {
+          nav.doNav(upCmd);
+        }
+        if(buttonMessage.button == 2) {
+          nav.doNav(downCmd);
+        }
+        if(buttonMessage.button == 3) {
+          nav.doNav(enterCmd);
+        }
+        updateNavOutput=1;
       }
     }
-    GUARD_TFT_BEGIN
-      nav.doOutput();//if not doing poll the we need to do output "manualy"
-    GUARD_TFT_END
-    Serial.println(carConfig.controlMode);
+    if(updateNavOutput) {
+        GUARD_TFT_BEGIN
+        nav.doOutput();
+        GUARD_TFT_END
+        updateNavOutput=0;
+    }
     vTaskDelay(20/portTICK_PERIOD_MS);
   }
 }
